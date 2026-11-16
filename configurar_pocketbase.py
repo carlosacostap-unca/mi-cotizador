@@ -27,7 +27,7 @@ import urllib.request
 from entorno import cargar_env
 
 cargar_env()
-URL =os.environ.get("POCKETBASE_URL", "http://127.0.0.1:8090").rstrip("/")
+URL = os.environ.get("POCKETBASE_URL", "").rstrip("/")
 
 # Un admin válido: rol admin y cuenta no desactivada.
 ES_ADMIN = '@request.auth.rol = "admin" && @request.auth.desactivado = false'
@@ -112,6 +112,8 @@ def main() -> None:
                     help="crea un usuario admin (email por argumento o PB_ADMIN_EMAIL; "
                          "clave de PB_ADMIN_PASSWORD o aleatoria)")
     args = ap.parse_args()
+    if not URL:
+        raise SystemExit("Falta configurar POCKETBASE_URL en el archivo .env (ver .env.example).")
 
     email = os.environ.get("PB_SUPERUSER_EMAIL") or input("Email del superusuario: ")
     clave = os.environ.get("PB_SUPERUSER_PASSWORD") or getpass.getpass("Contraseña del superusuario: ")

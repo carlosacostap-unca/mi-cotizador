@@ -15,7 +15,7 @@ from entorno import cargar_env
 # Dirección del servidor PocketBase: variable POCKETBASE_URL, definida en el
 # entorno o en el archivo .env junto a la aplicación (ver .env.example).
 cargar_env()
-POCKETBASE_URL = os.environ.get("POCKETBASE_URL", "http://127.0.0.1:8090").rstrip("/")
+POCKETBASE_URL = os.environ.get("POCKETBASE_URL", "").rstrip("/")
 
 
 # ---------------------------------------------------------------- conversión
@@ -48,6 +48,8 @@ class ErrorAuth(Exception):
 
 
 def _pedir(ruta: str, datos: dict | None = None, metodo: str = "POST", token: str | None = None) -> dict:
+    if not POCKETBASE_URL:
+        raise ErrorAuth("Falta configurar POCKETBASE_URL en el archivo .env (ver .env.example).")
     cabeceras = {"Content-Type": "application/json"}
     if token:
         cabeceras["Authorization"] = token

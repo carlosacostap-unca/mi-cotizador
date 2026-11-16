@@ -7,7 +7,7 @@ El conversor debe quedar reservado a personas con cuenta. Se usan los usuarios d
 - Pantalla de inicio de sesión (email y contraseña) como pantalla inicial.
 - Pantalla de registro (email, contraseña y confirmación), que al completarse inicia sesión.
 - El conversor solo se abre después de iniciar sesión; botón **Cerrar sesión** que vuelve al login.
-- La dirección de PocketBase se toma de `POCKETBASE_URL` (por defecto `http://127.0.0.1:8090`).
+- La dirección de PocketBase se toma de la variable `POCKETBASE_URL` (definida en el `.env`).
 
 ## Capabilities
 

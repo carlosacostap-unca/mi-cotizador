@@ -19,7 +19,7 @@ def cargar_env(ruta: Path | None = None) -> None:
     try:
         lineas = ruta.read_text(encoding="utf-8-sig").splitlines()
     except OSError:
-        return  # sin .env: se usan los valores por defecto
+        return  # sin .env: solo cuentan las variables del entorno
     for linea in lineas:
         linea = linea.strip()
         if not linea or linea.startswith("#") or "=" not in linea:
