@@ -12,7 +12,7 @@ import urllib.request
 from datetime import datetime
 from tkinter import messagebox, ttk
 
-from entorno import cargar_env
+from entorno import cargar_env, donde_se_busco
 
 # Direcciones de los servicios: variables POCKETBASE_URL y DOLARAPI_URL, definidas
 # en el entorno o en el archivo .env junto a la aplicación (ver .env.example).
@@ -81,7 +81,10 @@ class ErrorAuth(Exception):
 
 def _pedir(ruta: str, datos: dict | None = None, metodo: str = "POST", token: str | None = None) -> dict:
     if not POCKETBASE_URL:
-        raise ErrorAuth("Falta configurar POCKETBASE_URL en el archivo .env (ver .env.example).")
+        raise ErrorAuth(
+            "Falta configurar POCKETBASE_URL en el archivo .env (ver .env.example).\n"
+            f"El .env se busca en: {donde_se_busco()}"
+        )
     cabeceras = {"Content-Type": "application/json"}
     if token:
         cabeceras["Authorization"] = token
