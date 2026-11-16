@@ -13,3 +13,6 @@ historial.txt
 
 # Configuración local de Claude Code
 .claude/settings.local.json
+
+# PocketBase (binario, base de datos y credenciales locales)
+pocketbase/
