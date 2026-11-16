@@ -113,6 +113,10 @@ def main() -> None:
     col = pedir("GET", "/api/collections/users", token=token)
     existentes = {c["name"] for c in col["fields"]}
     campos = col["fields"] + [c for c in CAMPOS if c["name"] not in existentes]
+    # El panel de PocketBase muestra el email (y no el id) en las relaciones a users.
+    for c in campos:
+        if c["name"] == "email":
+            c["presentable"] = True
     pedir("PATCH", "/api/collections/users", {"fields": campos, **REGLAS}, token)
     print("Colección users configurada (campos rol y desactivado + reglas).")
 
