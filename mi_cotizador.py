@@ -4,26 +4,14 @@ Requiere iniciar sesión con un usuario de PocketBase (o registrarse).
 """
 import json
 import os
-import sys
 import tkinter as tk
 import urllib.error
 import urllib.request
 from datetime import datetime
-from pathlib import Path
 from tkinter import messagebox, ttk
 
 # Dirección del servidor PocketBase (se puede cambiar con la variable de entorno).
 POCKETBASE_URL = os.environ.get("POCKETBASE_URL", "http://127.0.0.1:8090").rstrip("/")
-
-
-def carpeta_base() -> Path:
-    """Carpeta del .exe (si está empaquetado) o del script."""
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent
-    return Path(__file__).resolve().parent
-
-
-ARCHIVO_HISTORIAL = carpeta_base() / "historial.txt"
 
 
 # ---------------------------------------------------------------- conversión
@@ -41,11 +29,13 @@ def convertir(pesos: float, cotizacion: float) -> float:
     return pesos / cotizacion
 
 
-def guardar_historial(pesos: float, cotizacion: float, dolares: float) -> None:
-    ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    linea = f"{ahora} | ${pesos:,.2f} ARS | cotización {cotizacion:,.2f} | US${dolares:,.2f}\n"
-    with open(ARCHIVO_HISTORIAL, "a", encoding="utf-8") as f:
-        f.write(linea)
+def fecha_local(fecha_servidor: str) -> str:
+    """Convierte la fecha UTC de PocketBase a hora local 'AAAA-MM-DD HH:MM:SS'."""
+    try:
+        dt = datetime.fromisoformat(fecha_servidor.replace("Z", "+00:00"))
+        return dt.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return fecha_servidor
 
 
 # ---------------------------------------------------------------- PocketBase
@@ -105,6 +95,21 @@ def registrar_usuario(email: str, clave: str, clave2: str) -> None:
         "/api/collections/users/records",
         {"email": email, "password": clave, "passwordConfirm": clave2},
     )
+
+
+# Historial de conversiones (colección `consultas`; las reglas de PocketBase
+# hacen que cada usuario solo cree y lea las suyas).
+def guardar_consulta(token: str, id_usuario: str, pesos: float, cotizacion: float, dolares: float) -> None:
+    _pedir(
+        "/api/collections/consultas/records",
+        {"usuario": id_usuario, "monto": pesos, "cotizacion": cotizacion, "resultado": dolares},
+        token=token,
+    )
+
+
+def listar_consultas(token: str) -> list[dict]:
+    datos = _pedir("/api/collections/consultas/records?perPage=50&sort=-fecha", metodo="GET", token=token)
+    return datos.get("items", [])
 
 
 # Administración de cuentas (las reglas de PocketBase exigen rol admin).
@@ -239,12 +244,32 @@ class PantallaConversor(ttk.Frame):
         self.resultado = ttk.Label(self, text="", font=("Segoe UI", 14, "bold"))
         self.resultado.grid(row=4, column=0, columnspan=2)
 
+        ttk.Label(self, text="Mi historial", font=("Segoe UI", 10, "bold")).grid(
+            row=5, column=0, columnspan=2, sticky="w", pady=(14, 2)
+        )
+        marco = ttk.Frame(self)
+        marco.grid(row=6, column=0, columnspan=2, sticky="ew")
+        columnas = ("fecha", "monto", "cotizacion", "resultado")
+        self.tabla = ttk.Treeview(marco, columns=columnas, show="headings", height=6, selectmode="none")
+        for col, titulo, ancho in (
+            ("fecha", "Fecha y hora", 135), ("monto", "Pesos", 90),
+            ("cotizacion", "Cotización", 80), ("resultado", "Dólares", 85),
+        ):
+            self.tabla.heading(col, text=titulo)
+            self.tabla.column(col, width=ancho, anchor="e" if col != "fecha" else "w")
+        self.tabla.grid(row=0, column=0)
+        barra = ttk.Scrollbar(marco, orient="vertical", command=self.tabla.yview)
+        self.tabla.configure(yscrollcommand=barra.set)
+        barra.grid(row=0, column=1, sticky="ns")
+        self.aviso_historial = ttk.Label(self, text="", foreground="firebrick")
+        self.aviso_historial.grid(row=7, column=0, columnspan=2, sticky="w")
+
         self.boton_panel = ttk.Button(
             self, text="Panel de administración", command=lambda: app.mostrar("admin")
         )
-        self.boton_panel.grid(row=5, column=0, columnspan=2, pady=(14, 0))
+        self.boton_panel.grid(row=8, column=0, columnspan=2, pady=(10, 0))
         ttk.Button(self, text="Cerrar sesión", command=self.cerrar_sesion).grid(
-            row=6, column=0, columnspan=2, pady=(6, 0)
+            row=9, column=0, columnspan=2, pady=(6, 0)
         )
 
     def al_mostrar(self) -> None:
@@ -254,7 +279,28 @@ class PantallaConversor(ttk.Frame):
             self.boton_panel.grid()
         else:
             self.boton_panel.grid_remove()
+        self.cargar_historial()
         self.monto.focus()
+
+    def cargar_historial(self) -> None:
+        """Muestra las consultas del usuario, la más reciente primero."""
+        self.tabla.delete(*self.tabla.get_children())
+        try:
+            consultas = listar_consultas(self.app.token)
+        except ErrorAuth as e:
+            self.aviso_historial.config(text=f"No se pudo cargar el historial: {e}")
+            return
+        self.aviso_historial.config(text="")
+        for c in consultas:
+            self.tabla.insert(
+                "", "end",
+                values=(
+                    fecha_local(c.get("fecha", "")),
+                    f"{c.get('monto', 0):,.2f}",
+                    f"{c.get('cotizacion', 0):,.2f}",
+                    f"US$ {c.get('resultado', 0):,.2f}",
+                ),
+            )
 
     def cerrar_sesion(self) -> None:
         self.app.cerrar_sesion()
@@ -276,9 +322,11 @@ class PantallaConversor(ttk.Frame):
 
         self.resultado.config(text=f"US$ {dolares:,.2f}")
         try:
-            guardar_historial(pesos, cot, dolares)
-        except OSError as e:
-            messagebox.showwarning("Historial", f"No se pudo guardar el historial:\n{e}")
+            guardar_consulta(self.app.token, self.app.id_usuario, pesos, cot, dolares)
+        except ErrorAuth as e:
+            messagebox.showwarning("Historial", f"No se pudo guardar la conversión en el historial:\n{e}")
+            return
+        self.cargar_historial()
 
 
 class PantallaAdmin(ttk.Frame):

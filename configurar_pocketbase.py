@@ -66,6 +66,40 @@ def pedir(metodo, ruta, datos=None, token=None):
         raise SystemExit(f"Error {e.code} en {metodo} {ruta}: {e.read().decode()}")
 
 
+def configurar_consultas(token: str, id_users: str) -> None:
+    """Crea (o actualiza) la colección `consultas`: el historial de conversiones."""
+    campos = [
+        {"type": "relation", "name": "usuario", "collectionId": id_users,
+         "required": True, "maxSelect": 1, "cascadeDelete": True},
+        {"type": "number", "name": "monto"},
+        {"type": "number", "name": "cotizacion", "required": True},
+        {"type": "number", "name": "resultado"},
+        # Fecha y hora asignadas por el servidor al crear.
+        {"type": "autodate", "name": "fecha", "onCreate": True, "onUpdate": False},
+    ]
+    # Cada usuario crea y lee solo lo suyo. Sin regla de update/delete (null):
+    # solo un superusuario puede modificar o borrar, el historial es inmutable.
+    reglas = {
+        "listRule": "usuario = @request.auth.id",
+        "viewRule": "usuario = @request.auth.id",
+        "createRule": '@request.auth.id != "" && @request.body.usuario = @request.auth.id',
+        "updateRule": None,
+        "deleteRule": None,
+    }
+    try:
+        col = pedir("GET", "/api/collections/consultas", token=token)
+    except SystemExit:
+        col = None
+    if col is None:
+        pedir("POST", "/api/collections", {"name": "consultas", "type": "base", "fields": campos, **reglas}, token)
+        print("Colección consultas creada.")
+    else:
+        existentes = {c["name"] for c in col["fields"]}
+        todos = col["fields"] + [c for c in campos if c["name"] not in existentes]
+        pedir("PATCH", "/api/collections/consultas", {"fields": todos, **reglas}, token)
+        print("Colección consultas actualizada.")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--crear-admin", metavar="EMAIL", help="crea un usuario admin con clave aleatoria")
@@ -81,6 +115,8 @@ def main() -> None:
     campos = col["fields"] + [c for c in CAMPOS if c["name"] not in existentes]
     pedir("PATCH", "/api/collections/users", {"fields": campos, **REGLAS}, token)
     print("Colección users configurada (campos rol y desactivado + reglas).")
+
+    configurar_consultas(token, col["id"])
 
     if args.crear_admin:
         alfabeto = string.ascii_letters + string.digits

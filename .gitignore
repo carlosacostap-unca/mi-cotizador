@@ -8,9 +8,6 @@ build/
 dist/
 *.spec
 
-# Datos generados por la app
-historial.txt
-
 # Configuración local de Claude Code
 .claude/settings.local.json
 
