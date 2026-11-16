@@ -4,6 +4,8 @@ Requiere iniciar sesión con un usuario de PocketBase (o registrarse).
 """
 import json
 import os
+import queue
+import threading
 import tkinter as tk
 import urllib.error
 import urllib.request
@@ -12,10 +14,11 @@ from tkinter import messagebox, ttk
 
 from entorno import cargar_env
 
-# Dirección del servidor PocketBase: variable POCKETBASE_URL, definida en el
-# entorno o en el archivo .env junto a la aplicación (ver .env.example).
+# Direcciones de los servicios: variables POCKETBASE_URL y DOLARAPI_URL, definidas
+# en el entorno o en el archivo .env junto a la aplicación (ver .env.example).
 cargar_env()
 POCKETBASE_URL = os.environ.get("POCKETBASE_URL", "").rstrip("/")
+DOLARAPI_URL = os.environ.get("DOLARAPI_URL", "").rstrip("/")
 
 
 # ---------------------------------------------------------------- conversión
@@ -40,6 +43,35 @@ def fecha_local(fecha_servidor: str) -> str:
         return dt.astimezone().strftime("%Y-%m-%d %H:%M:%S")
     except ValueError:
         return fecha_servidor
+
+
+# ---------------------------------------------------------------- cotización
+class ErrorCotizacion(Exception):
+    """Error legible al consultar el servicio de cotizaciones."""
+
+
+def obtener_cotizacion(url: str, timeout: float = 5) -> tuple[float, str]:
+    """Consulta el dólar oficial y devuelve (venta, fecha de actualización)."""
+    # Algunos servicios rechazan el User-Agent por defecto de Python (error 403).
+    req = urllib.request.Request(url, headers={"User-Agent": "MiCotizador/1.0", "Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            datos = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        raise ErrorCotizacion(f"El servicio de cotizaciones respondió con un error ({e.code}).") from None
+    except (urllib.error.URLError, TimeoutError, OSError):
+        raise ErrorCotizacion("No se pudo conectar con el servicio de cotizaciones.") from None
+    except ValueError:
+        raise ErrorCotizacion("El servicio de cotizaciones devolvió una respuesta ilegible.") from None
+    venta = datos.get("venta") if isinstance(datos, dict) else None
+    if isinstance(venta, bool) or not isinstance(venta, (int, float)) or not venta > 0:
+        raise ErrorCotizacion("El servicio no devolvió una cotización válida.")
+    return float(venta), str(datos.get("fechaActualizacion") or "")
+
+
+def formatear_cotizacion(valor: float) -> str:
+    """Formato del campo: dos decimales con coma (ej. 1575,00)."""
+    return f"{valor:.2f}".replace(".", ",")
 
 
 # ---------------------------------------------------------------- PocketBase
@@ -240,11 +272,19 @@ class PantallaConversor(ttk.Frame):
         self.monto.grid(row=1, column=1, pady=5)
 
         ttk.Label(self, text="Cotización del dólar:").grid(row=2, column=0, sticky="w", pady=5)
-        self.cotizacion = ttk.Entry(self, width=22)
-        self.cotizacion.grid(row=2, column=1, pady=5)
+        marco_cot = ttk.Frame(self)
+        marco_cot.grid(row=2, column=1, pady=5, sticky="w")
+        self.cotizacion = ttk.Entry(marco_cot, width=22)
+        self.cotizacion.grid(row=0, column=0, sticky="w")
+        self.info_cotizacion = ttk.Label(marco_cot, text="", foreground="gray", wraplength=230, justify="left")
+        self.info_cotizacion.grid(row=1, column=0, sticky="w")
+        self.id_consulta = 0  # identifica la última consulta de cotización pedida
 
-        ttk.Button(self, text="Convertir", command=self.on_convertir).grid(
-            row=3, column=0, columnspan=2, pady=12
+        botones = ttk.Frame(self)
+        botones.grid(row=3, column=0, columnspan=2, pady=12)
+        ttk.Button(botones, text="Convertir", command=self.on_convertir).pack(side="left", padx=4)
+        ttk.Button(botones, text="Actualizar cotización", command=lambda: self.pedir_cotizacion(True)).pack(
+            side="left", padx=4
         )
 
         self.resultado = ttk.Label(self, text="", font=("Segoe UI", 14, "bold"))
@@ -286,7 +326,56 @@ class PantallaConversor(ttk.Frame):
         else:
             self.boton_panel.grid_remove()
         self.cargar_historial()
+        if not self.cotizacion.get().strip():
+            self.pedir_cotizacion(False)
         self.monto.focus()
+
+    def pedir_cotizacion(self, reemplazar: bool) -> None:
+        """Consulta el dólar oficial en un hilo, sin bloquear la ventana."""
+        if not DOLARAPI_URL:
+            self._aviso_cotizacion("Falta configurar DOLARAPI_URL en el archivo .env (ver .env.example).")
+            return
+        self.id_consulta += 1
+        id_consulta, token = self.id_consulta, self.app.token
+        cola: queue.Queue = queue.Queue()
+
+        def trabajo() -> None:
+            try:
+                cola.put(("ok", obtener_cotizacion(DOLARAPI_URL)))
+            except ErrorCotizacion as e:
+                cola.put(("error", str(e)))
+
+        threading.Thread(target=trabajo, daemon=True).start()
+        self._esperar_cotizacion(cola, id_consulta, token, reemplazar)
+
+    def _esperar_cotizacion(self, cola: queue.Queue, id_consulta: int, token: str | None, reemplazar: bool) -> None:
+        # Se descarta si hay una consulta más nueva o si cambió la sesión.
+        if id_consulta != self.id_consulta or token != self.app.token:
+            return
+        try:
+            estado, dato = cola.get_nowait()
+        except queue.Empty:
+            self.after(100, lambda: self._esperar_cotizacion(cola, id_consulta, token, reemplazar))
+            return
+        if estado == "error":
+            self._aviso_cotizacion(str(dato))
+            return
+        venta, fecha = dato
+        if reemplazar or not self.cotizacion.get().strip():
+            self.cotizacion.delete(0, tk.END)
+            self.cotizacion.insert(0, formatear_cotizacion(venta))
+        detalle = f" · actualizada {fecha_local(fecha)}" if fecha else ""
+        self.info_cotizacion.config(text=f"Dólar oficial (venta){detalle}", foreground="gray")
+
+    def _aviso_cotizacion(self, texto: str) -> None:
+        self.info_cotizacion.config(text=texto, foreground="firebrick")
+
+    def limpiar(self) -> None:
+        """Vacía los campos y descarta cualquier consulta de cotización pendiente."""
+        self.id_consulta += 1
+        for campo in (self.monto, self.cotizacion):
+            campo.delete(0, tk.END)
+        self.info_cotizacion.config(text="")
 
     def cargar_historial(self) -> None:
         """Muestra las consultas del usuario, la más reciente primero."""
@@ -310,8 +399,6 @@ class PantallaConversor(ttk.Frame):
 
     def cerrar_sesion(self) -> None:
         self.app.cerrar_sesion()
-        for campo in (self.monto, self.cotizacion):
-            campo.delete(0, tk.END)
 
     def on_convertir(self) -> None:
         try:
@@ -508,6 +595,7 @@ class App(tk.Tk):
     def cerrar_sesion(self) -> None:
         self.usuario = self.id_usuario = self.token = None
         self.rol = "usuario"
+        self.pantallas["conversor"].limpiar()
         self.mostrar("login")
 
     def mostrar(self, nombre: str) -> None:
