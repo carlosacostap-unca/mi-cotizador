@@ -11,5 +11,8 @@ dist/
 # Configuración local de Claude Code
 .claude/settings.local.json
 
-# PocketBase (binario, base de datos y credenciales locales)
+# Configuración y credenciales locales (la plantilla .env.example sí se versiona)
+.env
+
+# PocketBase (binario y base de datos locales)
 pocketbase/

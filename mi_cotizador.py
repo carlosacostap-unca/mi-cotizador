@@ -10,7 +10,11 @@ import urllib.request
 from datetime import datetime
 from tkinter import messagebox, ttk
 
-# Dirección del servidor PocketBase (se puede cambiar con la variable de entorno).
+from entorno import cargar_env
+
+# Dirección del servidor PocketBase: variable POCKETBASE_URL, definida en el
+# entorno o en el archivo .env junto a la aplicación (ver .env.example).
+cargar_env()
 POCKETBASE_URL = os.environ.get("POCKETBASE_URL", "http://127.0.0.1:8090").rstrip("/")
 
 
