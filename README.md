@@ -6,6 +6,17 @@ Aplicación de escritorio (Python y Tkinter) que convierte pesos a dólares. Ini
 
 Copiá `.env.example` como `.env` y completá los valores (el `.env` no se sube a Git). Para dejar PocketBase listo (campos, reglas y colecciones) ejecutá `python configurar_pocketbase.py`.
 
+## Prueba de punta a punta con capturas
+
+`capturas_conversiones.py` abre Mi Cotizador, inicia sesión con el usuario de prueba, hace diez conversiones con montos distintos (1.000 a 1.000.000), guarda una captura de cada resultado en `capturas/<fecha>/` (carpeta fuera de Git) y comprueba contra PocketBase que las diez quedaron guardadas con el resultado correcto (monto ÷ cotización). Solo funciona en Windows.
+
+1. `pip install -r requirements.txt`.
+2. Completá en el `.env`: `PB_TEST_EMAIL` y `PB_TEST_PASSWORD`, además de `POCKETBASE_URL` y `DOLARAPI_URL`.
+3. Creá el usuario de prueba una sola vez: `python configurar_pocketbase.py --crear-usuario-prueba`. Es un usuario común y no se borra: el historial acumula las conversiones de cada ejecución.
+4. Con PocketBase en ejecución: `python capturas_conversiones.py` (abre el código fuente) o `python capturas_conversiones.py --exe` (abre `dist/Mi Cotizador.exe`). `--cuenta N` cambia la cuenta regresiva de 5 segundos.
+
+Mientras corre, **el programa toma el teclado y la ventana activa**: no toques nada. Para interrumpirlo, mové el mouse a una esquina de la pantalla (o Ctrl+C durante la cuenta regresiva). Termina con código 0 si las diez coinciden, 1 si alguna no coincide, 2 si falta configuración y 3 si falla al operar la ventana.
+
 ## Servidor MCP de PocketBase
 
 `mcp_pocketbase.py` es un servidor MCP (stdio) que le da a Claude Code herramientas sobre la base local de PocketBase. Está registrado en `.mcp.json`.

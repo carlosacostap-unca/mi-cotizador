@@ -16,3 +16,6 @@ dist/
 
 # PocketBase (binario y base de datos locales)
 pocketbase/
+
+# Capturas generadas por capturas_conversiones.py
+capturas/

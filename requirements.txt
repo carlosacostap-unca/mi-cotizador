@@ -1,3 +1,6 @@
 # Solo para el servidor MCP de PocketBase (mcp_pocketbase.py).
 # La aplicación de escritorio y su .exe no usan esta dependencia.
 mcp==1.30.0
+
+# Solo para capturas_conversiones.py (capturas de pantalla).
+Pillow==12.2.0

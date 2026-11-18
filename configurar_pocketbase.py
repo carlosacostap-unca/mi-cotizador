@@ -22,6 +22,7 @@ import os
 import secrets
 import string
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from entorno import cargar_env
@@ -111,9 +112,16 @@ def main() -> None:
     ap.add_argument("--crear-admin", metavar="EMAIL", nargs="?", const="",
                     help="crea un usuario admin (email por argumento o PB_ADMIN_EMAIL; "
                          "clave de PB_ADMIN_PASSWORD o aleatoria)")
+    ap.add_argument("--crear-usuario-prueba", action="store_true",
+                    help="crea el usuario de prueba (rol común) con PB_TEST_EMAIL y PB_TEST_PASSWORD; "
+                         "si ya existe, no lo toca")
     args = ap.parse_args()
     if not URL:
         raise SystemExit("Falta configurar POCKETBASE_URL en el archivo .env (ver .env.example).")
+    if args.crear_usuario_prueba:
+        faltan = [v for v in ("PB_TEST_EMAIL", "PB_TEST_PASSWORD") if not os.environ.get(v)]
+        if faltan:
+            raise SystemExit("Faltan en el .env o el entorno: " + ", ".join(faltan) + ". No se creó nada.")
 
     email = os.environ.get("PB_SUPERUSER_EMAIL") or input("Email del superusuario: ")
     clave = os.environ.get("PB_SUPERUSER_PASSWORD") or getpass.getpass("Contraseña del superusuario: ")
@@ -148,6 +156,19 @@ def main() -> None:
         print(f"Admin creado: {email_admin}")
         if generada:
             print(f"Contraseña generada: {clave_admin}  (guardala en PB_ADMIN_PASSWORD de tu .env)")
+
+    if args.crear_usuario_prueba:
+        email_prueba = os.environ["PB_TEST_EMAIL"]
+        filtro = urllib.parse.urlencode({"filter": f'email = "{email_prueba}"'})
+        if pedir("GET", f"/api/collections/users/records?{filtro}", token=token)["items"]:
+            print(f"El usuario de prueba {email_prueba} ya existe: no se modifica.")
+        else:
+            clave_prueba = os.environ["PB_TEST_PASSWORD"]
+            pedir("POST", "/api/collections/users/records", {
+                "email": email_prueba, "password": clave_prueba,
+                "passwordConfirm": clave_prueba, "emailVisibility": True,
+            }, token)
+            print(f"Usuario de prueba creado: {email_prueba}")
 
 
 if __name__ == "__main__":
