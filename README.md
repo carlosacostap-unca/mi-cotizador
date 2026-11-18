@@ -6,6 +6,26 @@ Aplicación de escritorio (Python y Tkinter) que convierte pesos a dólares. Ini
 
 Copiá `.env.example` como `.env` y completá los valores (el `.env` no se sube a Git). Para dejar PocketBase listo (campos, reglas y colecciones) ejecutá `python configurar_pocketbase.py`.
 
+## Asistente (chat con OpenAI)
+
+El botón **Asistente** del conversor abre un chat donde se piden cosas en lenguaje natural ("convertime 150 mil pesos", "¿a cuánto está el dólar?", "actualizá la cotización", "mostrame mis últimas conversiones"). El modelo de OpenAI interpreta el pedido y la app lo resuelve con sus propias funciones, usando tu sesión:
+
+- convertir pesos a dólares (se guarda en tu historial igual que con el botón; sin cotización indicada usa la venta del dólar oficial),
+- consultar la cotización del dólar oficial,
+- actualizar la cotización cargada en el conversor,
+- ver tu historial (hasta 50 conversiones).
+
+**No** puede administrar cuentas ni contraseñas, ni siquiera si sos admin.
+
+**Configuración** (en el `.env`, ver `.env.example`; las tres son obligatorias y no tienen valor por defecto): `OPENAI_URL` (la dirección del endpoint de chat completions), `OPENAI_MODEL` (el nombre del modelo, tal como figura en tu cuenta de OpenAI) y `OPENAI_API_KEY` (tu clave). Hay una cuarta, **opcional**: `OPENAI_REASONING_EFFORT`. Algunos modelos razonan por defecto y la API de chat no admite funciones en ese modo; si el chat muestra un error 400 que menciona `reasoning_effort`, definila como `none`. Si falta alguna de las tres obligatorias, el chat avisa cuál y el resto de la app funciona igual. La clave nunca se muestra, no se guarda en ningún archivo y no viaja dentro del `.exe`: se lee del `.env`.
+
+**Costo y privacidad**
+- Es un servicio de pago: cada mensaje consume crédito de la cuenta de la clave. Por mensaje, el asistente hace como máximo 5 rondas de funciones y se envían los últimos 20 mensajes de la conversación.
+- Lo que escribís y los resultados de las funciones (por ejemplo tu historial, si lo pedís) **se envían a OpenAI**. No se envían tu contraseña, tu email ni el token de sesión. La pantalla lo recuerda con un aviso.
+- La conversación vive solo en memoria y se borra al cerrar sesión.
+
+La lógica del chat está en `asistente.py`. Se probó con un servidor local que imita la API; la primera vez que agregues tu clave, probá un pedido de cada tipo.
+
 ## Cotizaciones del Banco Nación
 
 `cotizaciones_bna.py` entra a la página de cotizaciones del Banco Nación, lee la **compra y la venta del dólar de la tabla "Cotización Divisas"** y agrega una fila a `cotizaciones_bna.csv` (fuera de Git) con la fecha y hora de la consulta, la fecha que informa el banco, la compra y la venta. Solo usa la biblioteca estándar de Python.

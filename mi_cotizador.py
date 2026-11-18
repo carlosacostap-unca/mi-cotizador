@@ -12,6 +12,7 @@ import urllib.request
 from datetime import datetime
 from tkinter import messagebox, ttk
 
+import asistente
 from entorno import cargar_env, donde_se_busco
 
 # Direcciones de los servicios: variables POCKETBASE_URL y DOLARAPI_URL, definidas
@@ -317,9 +318,10 @@ class PantallaConversor(ttk.Frame):
             self, text="Panel de administración", command=lambda: app.mostrar("admin")
         )
         self.boton_panel.grid(row=8, column=0, columnspan=2, pady=(10, 0))
-        ttk.Button(self, text="Cerrar sesión", command=self.cerrar_sesion).grid(
-            row=9, column=0, columnspan=2, pady=(6, 0)
-        )
+        pie = ttk.Frame(self)
+        pie.grid(row=9, column=0, columnspan=2, pady=(6, 0))
+        ttk.Button(pie, text="Asistente", command=lambda: app.mostrar("chat")).pack(side="left", padx=4)
+        ttk.Button(pie, text="Cerrar sesión", command=self.cerrar_sesion).pack(side="left", padx=4)
 
     def al_mostrar(self) -> None:
         self.saludo.config(text=f"Sesión: {self.app.usuario}")
@@ -365,8 +367,17 @@ class PantallaConversor(ttk.Frame):
             return
         venta, fecha = dato
         if reemplazar or not self.cotizacion.get().strip():
-            self.cotizacion.delete(0, tk.END)
-            self.cotizacion.insert(0, formatear_cotizacion(venta))
+            self.fijar_cotizacion(venta, fecha)
+        else:
+            self._info_origen(fecha)
+
+    def fijar_cotizacion(self, venta: float, fecha: str) -> None:
+        """Carga la cotización en el campo (la usan el botón Actualizar y el asistente)."""
+        self.cotizacion.delete(0, tk.END)
+        self.cotizacion.insert(0, formatear_cotizacion(venta))
+        self._info_origen(fecha)
+
+    def _info_origen(self, fecha: str) -> None:
         detalle = f" · actualizada {fecha_local(fecha)}" if fecha else ""
         self.info_cotizacion.config(text=f"Dólar oficial (venta){detalle}", foreground="gray")
 
@@ -423,6 +434,191 @@ class PantallaConversor(ttk.Frame):
             messagebox.showwarning("Historial", f"No se pudo guardar la conversión en el historial:\n{e}")
             return
         self.cargar_historial()
+
+
+class OperacionesChat:
+    """Conecta las funciones del asistente con las de la app, con la sesión del usuario.
+
+    Las llamadas corren en el hilo de trabajo; lo que toca widgets se pide al hilo
+    principal a través de la cola de la solicitud.
+    """
+
+    def __init__(self, token: str, id_usuario: str, cola: queue.Queue) -> None:
+        self.token, self.id_usuario, self.cola = token, id_usuario, cola
+        self.pantalla_conversor: "PantallaConversor | None" = None
+
+    def cotizacion_oficial(self) -> tuple[float, str]:
+        if not DOLARAPI_URL:
+            raise asistente.ErrorOperacion("Falta configurar DOLARAPI_URL en el archivo .env.")
+        try:
+            return obtener_cotizacion(DOLARAPI_URL)
+        except ErrorCotizacion as e:
+            raise asistente.ErrorOperacion(str(e)) from None
+
+    def guardar(self, pesos: float, cotizacion: float, dolares: float) -> None:
+        try:
+            guardar_consulta(self.token, self.id_usuario, pesos, cotizacion, dolares)
+        except ErrorAuth as e:
+            raise asistente.ErrorOperacion(str(e)) from None
+
+    def historial(self, cantidad: int) -> list[dict]:
+        try:
+            consultas = listar_consultas(self.token)
+        except ErrorAuth as e:
+            raise asistente.ErrorOperacion(str(e)) from None
+        return [
+            {"fecha": fecha_local(c.get("fecha", "")), "monto_pesos": c.get("monto"),
+             "cotizacion": c.get("cotizacion"), "dolares": round(c.get("resultado") or 0, 2)}
+            for c in consultas[:cantidad]
+        ]
+
+    def cargar_cotizacion(self, venta: float, fecha: str) -> None:
+        """Carga el valor en el campo del conversor (se ejecuta en el hilo principal)."""
+        evento = threading.Event()
+        self.cola.put(("ejecutar", lambda: self.pantalla_conversor.fijar_cotizacion(venta, fecha), evento))
+        evento.wait(10)
+
+
+class PantallaChat(ttk.Frame):
+    """Chat con el asistente: pedidos en lenguaje natural resueltos con las funciones de la app."""
+
+    AVISO = ("Lo que escribas y los resultados de las funciones (por ejemplo tu historial) se envían "
+             "a OpenAI. No se envían tu contraseña ni tu email.")
+    BIENVENIDA = ("Pedime, por ejemplo: «convertí 150 mil pesos», «¿a cuánto está el dólar?», "
+                  "«actualizá la cotización» o «mostrame mis últimas conversiones».")
+
+    def __init__(self, app: "App") -> None:
+        super().__init__(app, padding=15)
+        self.app = app
+        self.conversacion: list[dict] = []
+        self.generacion = 0   # cambia al cerrar sesión: descarta respuestas pendientes
+        self.ocupado = False
+        self.habilitado = True
+
+        ttk.Label(self, text="Asistente", font=("Segoe UI", 14, "bold")).grid(row=0, column=0, sticky="w")
+        ttk.Label(self, text=self.AVISO, foreground="gray", wraplength=480, justify="left").grid(
+            row=1, column=0, columnspan=2, sticky="w", pady=(2, 8)
+        )
+        marco = ttk.Frame(self)
+        marco.grid(row=2, column=0, columnspan=2, sticky="nsew")
+        self.texto = tk.Text(marco, width=62, height=16, wrap="word", state="disabled", relief="solid", borderwidth=1)
+        barra = ttk.Scrollbar(marco, orient="vertical", command=self.texto.yview)
+        self.texto.configure(yscrollcommand=barra.set)
+        self.texto.grid(row=0, column=0)
+        barra.grid(row=0, column=1, sticky="ns")
+        self.texto.tag_configure("usuario", foreground="#0b57d0")
+        self.texto.tag_configure("asistente", foreground="black")
+        self.texto.tag_configure("sistema", foreground="gray")
+        self.texto.tag_configure("error", foreground="firebrick")
+
+        self.estado = ttk.Label(self, text="", foreground="gray", wraplength=480, justify="left")
+        self.estado.grid(row=3, column=0, columnspan=2, sticky="w", pady=(6, 0))
+
+        entrada = ttk.Frame(self)
+        entrada.grid(row=4, column=0, columnspan=2, pady=(6, 0), sticky="ew")
+        self.entrada = ttk.Entry(entrada, width=54)
+        self.entrada.pack(side="left", padx=(0, 6))
+        self.boton_enviar = ttk.Button(entrada, text="Enviar", command=self.enviar)
+        self.boton_enviar.pack(side="left")
+        ttk.Button(self, text="Volver al conversor", command=lambda: app.mostrar("conversor")).grid(
+            row=5, column=0, columnspan=2, pady=(10, 0)
+        )
+
+    # ------------------------------------------------------------------ estado
+    def al_mostrar(self) -> None:
+        try:
+            asistente.configuracion()
+        except asistente.ErrorAsistente as e:
+            self._habilitar(False, str(e))
+        else:
+            self._habilitar(True, "El asistente está respondiendo…" if self.ocupado else "")
+        if not self.texto.get("1.0", "end").strip():
+            self._agregar(self.BIENVENIDA, "sistema")
+        self.entrada.focus()
+
+    def _habilitar(self, si: bool, mensaje: str = "") -> None:
+        self.habilitado = si
+        estado = "normal" if si and not self.ocupado else "disabled"
+        self.entrada.config(state=estado)
+        self.boton_enviar.config(state=estado)
+        self.estado.config(text=mensaje, foreground="gray" if si else "firebrick")
+
+    def _agregar(self, texto: str, etiqueta: str) -> None:
+        self.texto.config(state="normal")
+        self.texto.insert("end", texto + "\n\n", etiqueta)
+        self.texto.config(state="disabled")
+        self.texto.see("end")
+
+    def limpiar(self) -> None:
+        """Borra la conversación y descarta cualquier respuesta pendiente (al cerrar sesión)."""
+        self.generacion += 1
+        self.conversacion = []
+        self.ocupado = False
+        self.texto.config(state="normal")
+        self.texto.delete("1.0", "end")
+        self.texto.config(state="disabled")
+        self.entrada.config(state="normal")
+        self.entrada.delete(0, tk.END)
+        self.estado.config(text="")
+
+    # ----------------------------------------------------------------- envío
+    def enviar(self) -> None:
+        if self.ocupado or not self.habilitado:
+            return
+        pedido = self.entrada.get().strip()
+        if not pedido:
+            return
+        try:
+            config = asistente.configuracion()
+        except asistente.ErrorAsistente as e:
+            self._habilitar(False, str(e))
+            return
+        self.entrada.delete(0, tk.END)
+        self.conversacion.append({"role": "user", "content": pedido})
+        self._agregar("Vos: " + pedido, "usuario")
+        self.ocupado = True
+        self._habilitar(True, "El asistente está respondiendo…")
+
+        generacion, token = self.generacion, self.app.token
+        conversacion = self.conversacion
+        cola: queue.Queue = queue.Queue()
+        ops = OperacionesChat(token, self.app.id_usuario, cola)
+        ops.pantalla_conversor = self.app.pantallas["conversor"]
+
+        def trabajo() -> None:
+            try:
+                cola.put(("ok", asistente.responder(conversacion, ops, config)))
+            except asistente.ErrorAsistente as e:
+                cola.put(("error", str(e)))
+            except Exception as e:  # no dejar el chat bloqueado ante un fallo inesperado
+                cola.put(("error", f"Error inesperado: {type(e).__name__}."))
+
+        threading.Thread(target=trabajo, daemon=True).start()
+        self._sondear(cola, generacion, token)
+
+    def _sondear(self, cola: queue.Queue, generacion: int, token: str | None) -> None:
+        """Atiende la cola de la solicitud en el hilo principal, sin bloquear la ventana."""
+        if generacion != self.generacion or token != self.app.token:
+            return  # se cerró la sesión: se descarta todo
+        while True:
+            try:
+                item = cola.get_nowait()
+            except queue.Empty:
+                self.after(80, lambda: self._sondear(cola, generacion, token))
+                return
+            if item[0] == "ejecutar":  # algo que debe correr en el hilo principal
+                _, funcion, evento = item
+                try:
+                    funcion()
+                finally:
+                    evento.set()
+                continue
+            tipo, texto = item
+            self._agregar(("Asistente: " if tipo == "ok" else "") + texto, "asistente" if tipo == "ok" else "error")
+            self.ocupado = False
+            self._habilitar(True)
+            self.entrada.focus()
+            return
 
 
 class PantallaAdmin(ttk.Frame):
@@ -577,6 +773,7 @@ class App(tk.Tk):
             "registro": PantallaRegistro(self),
             "conversor": PantallaConversor(self),
             "admin": PantallaAdmin(self),
+            "chat": PantallaChat(self),
         }
         self.actual: str | None = None
         self.bind("<Return>", self._on_enter)
@@ -599,11 +796,12 @@ class App(tk.Tk):
         self.usuario = self.id_usuario = self.token = None
         self.rol = "usuario"
         self.pantallas["conversor"].limpiar()
+        self.pantallas["chat"].limpiar()
         self.mostrar("login")
 
     def mostrar(self, nombre: str) -> None:
         # El conversor solo se abre con sesión iniciada; el panel, solo para admins.
-        if nombre == "conversor" and not self.usuario:
+        if nombre in ("conversor", "chat") and not self.usuario:
             nombre = "login"
         if nombre == "admin" and not self.es_admin:
             nombre = "conversor" if self.usuario else "login"
@@ -616,7 +814,8 @@ class App(tk.Tk):
 
     def _on_enter(self, _evento) -> None:
         pantalla = self.pantallas[self.actual]
-        accion = {"login": "enviar", "registro": "enviar", "conversor": "on_convertir"}.get(self.actual)
+        accion = {"login": "enviar", "registro": "enviar", "conversor": "on_convertir",
+                  "chat": "enviar"}.get(self.actual)
         if accion:
             getattr(pantalla, accion)()
 
