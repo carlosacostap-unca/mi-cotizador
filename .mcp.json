@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "pocketbase": {
+      "command": "python",
+      "args": ["mcp_pocketbase.py"]
+    }
+  }
+}
