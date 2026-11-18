@@ -19,3 +19,6 @@ pocketbase/
 
 # Capturas generadas por capturas_conversiones.py
 capturas/
+
+# Cotizaciones registradas por cotizaciones_bna.py
+cotizaciones_bna.csv

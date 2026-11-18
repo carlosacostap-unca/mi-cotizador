@@ -6,6 +6,25 @@ Aplicación de escritorio (Python y Tkinter) que convierte pesos a dólares. Ini
 
 Copiá `.env.example` como `.env` y completá los valores (el `.env` no se sube a Git). Para dejar PocketBase listo (campos, reglas y colecciones) ejecutá `python configurar_pocketbase.py`.
 
+## Cotizaciones del Banco Nación
+
+`cotizaciones_bna.py` entra a la página de cotizaciones del Banco Nación, lee la **compra y la venta del dólar de la tabla "Cotización Divisas"** y agrega una fila a `cotizaciones_bna.csv` (fuera de Git) con la fecha y hora de la consulta, la fecha que informa el banco, la compra y la venta. Solo usa la biblioteca estándar de Python.
+
+1. Definí `BNA_URL` en el `.env` (la dirección de la página de cotizaciones).
+2. Ejecutá `python cotizaciones_bna.py` (con `--archivo RUTA` para otro destino).
+
+Cada ejecución hace **una** consulta y guarda **una** fila, aunque el banco no haya cambiado el valor. Si la página no responde o cambió de forma que no se puede leer con certeza, no escribe nada y termina con código 1 (2 si falta `BNA_URL`). La tabla de divisas trae solo la fecha, sin hora, por eso se guarda la hora de tu consulta.
+
+El CSV usa `;` como separador y coma decimal, en UTF-8 con BOM: se abre directo en Excel en español. Cerralo en Excel antes de la siguiente ejecución, porque Excel bloquea el archivo.
+
+Para registrar la cotización todos los días, programalo con el Programador de tareas de Windows (ajustá la hora y la ruta):
+
+```
+schtasks /Create /SC DAILY /ST 17:30 /TN "Cotizaciones BNA" /TR "python C:\ruta\al\proyecto\cotizaciones_bna.py"
+```
+
+El `.env` se busca junto al programa. Ejecutalo con moderación: es el sitio de un tercero y el programa no limita la frecuencia por sí mismo. Si el banco rediseña la página, la lectura va a fallar con un aviso hasta que se ajuste el programa.
+
 ## Prueba de punta a punta con capturas
 
 `capturas_conversiones.py` abre Mi Cotizador, inicia sesión con el usuario de prueba, hace diez conversiones con montos distintos (1.000 a 1.000.000), guarda una captura de cada resultado en `capturas/<fecha>/` (carpeta fuera de Git) y comprueba contra PocketBase que las diez quedaron guardadas con el resultado correcto (monto ÷ cotización). Solo funciona en Windows.

@@ -30,8 +30,18 @@ from urllib.parse import urlencode
 
 import mi_cotizador as m  # carga el .env y trae el cliente de PocketBase
 
-RAIZ = Path(__file__).resolve().parent
-EXE = RAIZ / "dist" / "Mi Cotizador.exe"
+EMPAQUETADO = getattr(sys, "frozen", False)  # ejecutándose como .exe de PyInstaller
+RAIZ = Path(sys.executable).parent if EMPAQUETADO else Path(__file__).resolve().parent
+
+
+def ubicar_exe() -> Path:
+    """Busca Mi Cotizador.exe: junto a este programa, en dist/ o en ../dist/."""
+    candidatos = [RAIZ / "Mi Cotizador.exe", RAIZ / "dist" / "Mi Cotizador.exe",
+                  RAIZ.parent / "dist" / "Mi Cotizador.exe"]
+    return next((c for c in candidatos if c.exists()), candidatos[1])
+
+
+EXE = ubicar_exe()
 TITULO = "Mi Cotizador"
 # Fijos y distintos, para poder reproducir una ejecución. Se escriben sin separadores.
 MONTOS = [1000, 5000, 12500, 25000, 50000, 75000, 100000, 250000, 500000, 1000000]
@@ -255,8 +265,11 @@ def main() -> int:
     if faltan:
         print("Faltan en el .env o el entorno: " + ", ".join(faltan) + ". No se abrió nada.")
         return 2
-    if args.exe and not EXE.exists():
-        print(f"No existe {EXE}. Generalo con PyInstaller o ejecutá sin --exe.")
+    # Empaquetado como .exe no hay código fuente que abrir: se usa siempre Mi Cotizador.exe.
+    usar_exe = args.exe or EMPAQUETADO
+    if usar_exe and not EXE.exists():
+        print(f"No encuentro Mi Cotizador.exe (busqué en {EXE.parent}). Dejalo junto a este programa"
+              + ("." if EMPAQUETADO else " o ejecutá sin --exe."))
         return 2
     try:
         import PIL  # noqa: F401
@@ -297,7 +310,7 @@ def main() -> int:
     inicio_utc = (datetime.now(timezone.utc) - timedelta(seconds=2)).strftime("%Y-%m-%d %H:%M:%S")
     proceso = None
     try:
-        proceso = abrir_aplicacion(args.exe)
+        proceso = abrir_aplicacion(usar_exe)
         hwnd = esperar_ventana(proceso)
         time.sleep(1.0)
         iniciar_sesion_en_ventana(hwnd, email, clave)
